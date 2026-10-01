@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Hero } from './components/Hero';
 import { GroupView } from './components/GroupView';
 import { BottomBar } from './components/BottomBar';
@@ -154,6 +154,39 @@ export default function App() {
       .getElementById(`q-${id}`)
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, []);
+
+  // Đo chiều cao topbar / audio bar / bottom bar → CSS --h-*.
+  // Layout .work dùng các biến này để cao đúng bằng viewport còn lại,
+  // hai cột passage | câu hỏi cuộn riêng, trang không nhảy scrollbar.
+  useLayoutEffect(() => {
+    if (!exercise) return;
+    const root = document.documentElement;
+    const measure = (sel: string, fallback: number) => {
+      const h =
+        document.querySelector(sel)?.getBoundingClientRect().height ?? 0;
+      return Math.round(h || fallback);
+    };
+    const update = () => {
+      root.style.setProperty('--h-top', `${measure('.topbar', 63)}px`);
+      root.style.setProperty('--h-audio', `${measure('.audio-bar', 0)}px`);
+      root.style.setProperty('--h-bottom', `${measure('.bottom-bar', 60)}px`);
+    };
+    update();
+
+    const ro =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    if (ro) {
+      for (const sel of ['.topbar', '.audio-bar', '.bottom-bar']) {
+        const el = document.querySelector(sel);
+        if (el) ro.observe(el);
+      }
+    }
+    window.addEventListener('resize', update);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [exercise]);
 
   const allQuestions = useMemo(
     () => exercise?.groups.flatMap((g) => g.questions) ?? [],
