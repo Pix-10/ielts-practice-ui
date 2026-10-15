@@ -36,11 +36,6 @@
 
   --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", Consolas, monospace;
-
-  /* Chiều cao các thanh cố định — App đo lại bằng JS cho chính xác */
-  --h-top: 63px;
-  --h-audio: 56px;
-  --h-bottom: 60px;
 }
 
 [data-theme='dark'] {
@@ -262,8 +257,27 @@ select {
 }
 
 /* ---------- Layout 2 cột bằng nhau: bài đọc | câu hỏi ----------
-   Chiều cao = vừa viewport (trừ topbar / audio bar / bottom bar),
-   mỗi cột có thanh scroll riêng — trang không cuộn. */
+   Chế độ làm bài (html.mode-exercise): #root thành flex column chiếm
+   trọn viewport — .work lấp phần còn lại bằng flex, topbar / audio /
+   bottom bar là các flex item tự có chiều cao. Không đo JS, không tính
+   calc: 2 cột luôn vừa đúng màn hình, trang không bao giờ cuộn. */
+html.mode-exercise body {
+  overflow: hidden;
+}
+
+html.mode-exercise #root {
+  height: 100vh;
+  height: 100dvh; /* mobile: trừ thanh địa chỉ */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+html.mode-exercise .work {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .work {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -272,10 +286,8 @@ select {
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   gap: 18px;
-  max-width: 1600px;
-  margin: 0 auto;
+  width: 100%; /* trải hết chiều rộng màn hình */
   padding: 18px 24px 0;
-  height: calc(100vh - var(--h-top) - var(--h-audio) - var(--h-bottom));
 }
 
 .work-left,
@@ -305,34 +317,31 @@ select {
   overflow-y: visible;
 }
 
-/* ---------- Mobile: 1 cột, cuộn trang bình thường ---------- */
+/* card passage lấp đầy cột trái, không để trống phía dưới */
+.work-left .card:has(.passage-head) {
+  flex: 1 0 auto;
+}
+
+/* ---------- Mobile: xếp chồng passage ~40% / câu hỏi ~60%,
+   vẫn nằm gọn trong màn hình, mỗi khu vực cuộn riêng ---------- */
 @media (max-width: 760px) {
   .work {
     grid-template-columns: 1fr;
-    grid-template-rows: none;
-    overflow: visible;
-    height: auto;
-    padding: 14px 14px 130px;
-    gap: 14px;
+    grid-template-rows: minmax(0, 2fr) minmax(0, 3fr);
+    padding: 12px 12px 0;
+    gap: 12px;
   }
   .work-left,
   .work-right {
-    overflow: visible;
     padding-right: 0;
-  }
-  .work .passage-body {
-    max-height: 50vh;
-    overflow-y: auto;
   }
 }
 
-/* ---------- Bottom bar: điều hướng + tiến độ ---------- */
+/* ---------- Bottom bar: điều hướng + tiến độ ----------
+   Nằm trong flex column của #root (không còn fixed) → tự dính đáy
+   và tính vào chiều cao, 2 cột phía trên lấp phần còn lại. */
 .bottom-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 46;
+  flex-shrink: 0;
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -341,8 +350,6 @@ select {
 }
 
 .bb-inner {
-  max-width: 1440px;
-  margin: 0 auto;
   padding: 9px 24px;
   display: flex;
   align-items: center;
@@ -1141,8 +1148,6 @@ textarea.answer-input {
 }
 
 .audio-inner {
-  max-width: 1360px;
-  margin: 0 auto;
   padding: 9px 24px;
   display: flex;
   align-items: center;
