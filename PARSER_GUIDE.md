@@ -184,8 +184,61 @@ Answer the following questions. Write your answers in your own words.
 
 Test liên quan:
 
+## 7. Bảng ký hiệu được hỗ trợ (`src/utils/symbols.ts`)
+
+Mọi regex ký hiệu sống ở **1 file duy nhất** `src/utils/symbols.ts`
+(`BLANK_RE`, `normalizeLine`) — parser và UI render nét đứt dùng chung,
+thêm ký hiệu mới chỉ cần sửa 1 chỗ.
+
+### Chỗ trống (gap / form / bảng)
+
+| Ký hiệu | Ví dụ |
+|---|---|
+| Gạch dưới 2+ | `___`, `﹏﹏`, `＿` (full-width) |
+| Chấm 3+ / … 2+ | `...`, `……`, `···` |
+| Ngoặc tròn | `(....)`, `(      )`, `( )` (rỗng cũng tính) |
+| Ngoặc vuông | `[]`, `[ ]`, `[____]`, `[....]` |
+| Ô vuông / tròn | `□`, `□□□`, `◻`, `○○` |
+| Khác | `???`, `###`, `***`, `×××` |
+
+> 1 ký tự đơn (`_ ? * • …`) **không** tính là blank (tránh nuốt dấu câu).
+
+### Số câu
+
+`1.` `1)` `(1)` `1:` `1、` `1 text` + tiền tố
+`Q1.` `Q. 5` `No. 12:` `Question 3` `Câu 1:` `Câu hỏi 2:` `Item 7`.
+
+### Options
+
+`A.` `A)` `(A)` `[A]` `A:` `A、` (tới `J`), La Mã `i.` `ii.` `iv)`,
+full-width `Ａ．`, khoanh tròn `Ⓐ` `ⓐ`, `①` → số câu.
+
+### Header group
+
+`Questions`, `Question`, `Câu hỏi`, `Câu`, `Part`, `Section`,
+`Exercise`, `Task`, `Bài` (+ `Bài tập`) — range `1-5 1–5 1—5 1~5 1 to 5`,
+chấp nhận `Part 1: Questions 1-5`, header dính instruction.
+
+### Legend boolean
+
+`TRUE FALSE NOT GIVEN YES NO` đứng riêng từng dòng,
+kể cả `T/F`, `ĐÚNG/SAI`.
+
+### Chuẩn hoá tự động (`normalizeLine`)
+
+Số/chữ full-width (`９ Ａ ．`), `①-⑳` → số, `Ⓐ-Ⓙ` → `A.`–`J.`,
+dấu câu CJK (`，；：（）［］【】` → `,;:()[]`), `﹏﹍＿` → `_`,
+`⋯`/`···` → `...`, `～` → `~`, quotes cong, NBSP.
+
+```bash
+npx tsx scripts/test-symbols.ts   # 40+ assertions cho bảng ký hiệu
+```
+
+## 8. Chạy kiểm thử parser
+
 ```bash
 npx tsx scripts/test-parser.ts        # regression với sample-ielts.docx
 npx tsx scripts/test-parser-edge.ts   # heading/list/bảng tách ô/legend/bank chồng/write
+npx tsx scripts/test-symbols.ts       # bảng ký hiệu (mục 7)
 npx tsx --tsconfig tsconfig.app.json scripts/test-groups.ts   # interactions
 ```

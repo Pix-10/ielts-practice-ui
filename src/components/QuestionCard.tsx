@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { Answers, Question } from '../types';
+import { BLANK_RE, blankSplitRe } from '../utils/symbols';
 
 const TYPE_BADGE: Record<Question['type'], { label: string; cls: string }> = {
   mcq: { label: 'Trắc nghiệm', cls: '' },
@@ -21,13 +22,14 @@ interface Props {
   onFocus: (id: string) => void;
 }
 
-/** Hiển thị text câu hỏi, biến chỗ trống "____" thành nét đứt */
+/** Hiển thị text câu hỏi, biến chỗ trống thành nét đứt
+ *  (tập ký hiệu xem BLANK_RE trong utils/symbols) */
 function QuestionText({ text }: { text: string }) {
-  const parts = text.split(/(_{2,}|\(\s*[.。…_-]{3,}\s*\)|…{2,})/g);
+  const parts = text.split(blankSplitRe());
   return (
     <span className="qtext">
       {parts.map((p, i) =>
-        /(_{2,}|\(\s*[.。…_-]{3,}\s*\)|…{2,})/.test(p) ? (
+        BLANK_RE.test(p) ? (
           <span key={i} className="blank">
             &nbsp;
           </span>

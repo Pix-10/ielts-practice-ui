@@ -7,6 +7,7 @@ import type {
   QuestionType,
   TableCell,
 } from '../types';
+import { BLANK_RE, normalizeLine } from './symbols';
 
 /* ------------------------------------------------------------------ */
 /*  Block model: docx → danh sách đoạn văn / bảng                      */
@@ -82,13 +83,22 @@ function htmlToBlocks(html: string): Block[] {
 /*  Regex nhận diện                                                    */
 /* ------------------------------------------------------------------ */
 
-/** "Questions 1-5", "Questions 1 – 5", "Câu 1-5", "Questions 7" */
-const GROUP_HEADER =
-  /^(?:questions?|câu\s*(?:hỏi|h)\s*|part|section)\s*[-–—:]?\s*(\d{1,3})(?:\s*(?:[-–—]|to)\s*(\d{1,3}))?/i;
+/** Từ khóa mở đầu group: Questions, Câu hỏi, Part, Section, Exercise, Task, Bài...
+ *  (xem thêm ký hiệu trong ./symbols) */
+const GROUP_KEY =
+  'questions?|câu\\s*(?:hỏi|h)\\s*|part|section|exercise|task|bài(?:\\s*tập)?';
+
+/** "Questions 1-5", "Questions 1 – 5", "Câu 1-5", "Bài 1~3", "Questions 7" */
+const GROUP_HEADER = new RegExp(
+  `^(?:${GROUP_KEY})\\s*[-–—:~]?\\s*(\\d{1,3})(?:\\s*(?:[-–—~]|to)\\s*(\\d{1,3}))?`,
+  'i',
+);
 
 /** Bản không neo ^ để tìm header nằm giữa dòng ("Part 1: Questions 1-5") */
-const GROUP_HEADER_ANY =
-  /(?:questions?|câu\s*(?:hỏi|h)\s*|part|section)\s*[-–—:]?\s*(\d{1,3})(?:\s*(?:[-–—]|to)\s*(\d{1,3}))?/gi;
+const GROUP_HEADER_ANY = new RegExp(
+  `(?:${GROUP_KEY})\\s*[-–—:~]?\\s*(\\d{1,3})(?:\\s*(?:[-–—~]|to)\\s*(\\d{1,3}))?`,
+  'gi',
+);
 
 /** Kết quả phân tích một dòng header: range + phần instruction dính sau */
 interface ParsedHeader {
@@ -116,7 +126,7 @@ function parseGroupHeader(line: string): ParsedHeader | null {
   const prefixOk =
     !prefix.trim() ||
     /[:：–—() -]\s*$/.test(prefix) ||
-    /^(?:part|section)\s*\d+\s*[:：–—-]?\s*$/i.test(prefix);
+    /^(?:part|section|exercise|task|bài)\s*\d+\s*[:：–—-]?\s*$/i.test(prefix);
   if (!prefixOk || index > 24) return null;
   const header = m[0].trim();
   const range = m[2] ? `${m[1]}-${m[2]}` : `${m[1]}`;
@@ -131,10 +141,15 @@ function parseGroupHeader(line: string): ParsedHeader | null {
 const Q_NUM = /^[([]?(\d{1,3})[)\].、:]\s*(.+)$/;
 const Q_NUM_LOOSE = /^(\d{1,3})\s{1,2}([A-Za-z(\[].+)$/;
 
+/** Số câu có tiền tố: "Q1.", "Q. 5", "No. 12:", "Question 3", "Câu 1:", "Item 7" */
+const Q_NUM_PREFIX =
+  /^(?:Q(?:uestion)?|No|Nº|Câu(?:\s*hỏi)?|Item)\s*\.?\s*(\d{1,3})\s*[)\].、:~\-–—]?\s*(.+)$/i;
+
 /** Form line: "1. Họ tên: ..........", "Địa chỉ: _____", "Ngày sinh: (....)"
- *  — số tùy chọn, label + dấu hai chấm + BẮT BUỘC chỗ trống phía sau */
+ *  — số tùy chọn, label + dấu hai chấm + BẮT BUỘC chỗ trống phía sau
+ *  (tập ký hiệu chỗ trống xem BLANK_RE trong ./symbols) */
 const FORM_LINE =
-  /^(?:[([]?(\d{1,3})[)\].、]\s+)?([^:：\n]{2,60}?)\s*[:：]\s*(?:_{2,}|\.{3,}|\…{2,}|\(\s*[.…_ -]{3,}\s*\)|\[[.…_ -]{2,}\])\s*$/;
+  /^(?:[([]?(\d{1,3})[)\].、]\s+)?([^:：\n]{2,60}?)\s*[:：]\s*(?:_{2,}|\.{3,}|…{2,}|\(\s*\)|\(\s*[.…_·\-–—\s]{2,}\s*\)|\[[.…_·\-–—\s]*\]|[□◻○◯]+|[×✕✖?#*]{2,})\s*$/;
 
 /** "A. text", "B) text" — tới J để phủ matching A–G/H */
 const OPT_LETTER = /^[([]?([A-Ja-j])[)\].、:]\s+(.+)$/;
@@ -143,9 +158,10 @@ const OPT_LETTER = /^[([]?([A-Ja-j])[)\].、:]\s+(.+)$/;
 const OPT_ROMAN =
   /^[([]?((?:xi{0,3}|ix|iv|vi{0,3}|i{1,3}|x))\s*[).、:]\s+(.+)$/i;
 
-/** Dòng legend đứng riêng: "TRUE", "FALSE", "NOT GIVEN", "YES", "NO"
- *  (gộp vào instruction để suy type boolean, tránh dính vào text câu hỏi) */
-const LEGEND_LINE = /^(TRUE|FALSE|NOT GIVEN|YES|NO)(\s*[-–—:.].*)?$/i;
+/** Dòng legend đứng riêng: "TRUE", "FALSE", "NOT GIVEN", "YES", "NO",
+ *  "T/F", "ĐÚNG", "SAI" (gộp vào instruction, tránh dính vào text câu hỏi) */
+const LEGEND_LINE =
+  /^(TRUE|FALSE|NOT GIVEN|YES|NO|T\/F|ĐÚNG|SAI)(\s*[-–—:.].*)?$/i;
 
 /** Dòng ứng viên word bank xếp chồng (mỗi dòng 1–3 từ, vd bullet list) */
 const BANK_LINE = /^[A-Za-zÀ-ỹ'’\-()./ ]{2,28}$/;
@@ -153,10 +169,9 @@ const BANK_LINE = /^[A-Za-zÀ-ỹ'’\-()./ ]{2,28}$/;
 const INSTR_RE =
   /(choose the correct letter|correct letter,?\s*[A-D]|match the|matching|list of headings|true\s*\/?\s*false|yes\s*\/?\s*no|not given|complete the|fill in|write the correct|no more than|you may use|you can use|more than once|one word|two words|three words|does the writer|which paragraph|find (?:the )?information|which section|answer (?:the )?(?:following )?questions|label the|choose (?:one|two|three)|circle the|hoàn thành|hợp lý nhất|điền từ|chọn đáp án|ghi nhãn|khoanh tròn)/i;
 
-const BLANK_RE = /_{2,}|\(\s*[.。…_-]{3,}\s*\)|\[ *\]|…{2,}|_{1}/;
-
 /** Ô trong bảng là ô điền đáp án: "1. .....", "(2) ......", "3" (khi instruction bảo complete table) */
-const CELL_BLANK = /^[([]?(\d{1,3})[)\].、]?\s*(?:[._….\-–—]{2,})?\s*$/;
+const CELL_BLANK =
+  /^[([]?(\d{1,3})[)\].、]?\s*(?:[._…□◻○◯×?#*\-–—]{2,})?\s*$/;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -238,19 +253,6 @@ function numberInRange(
   return n >= a && (Number.isNaN(b) ? true : n <= b);
 }
 
-/** Chuẩn hoá dòng text: số full-width (１２３), NBSP, ngoặc/quotes cong.
- *  File Word copy từ web/PDF hay dính ký tự này → regex không khớp. */
-function normalizeLine(s: string): string {
-  return s
-    .replace(/[０-９]/g, (d) => String(d.charCodeAt(0) - 0xff10))
-    .replace(/[（）]/g, (c) => (c === '（' ? '(' : ')'))
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/[\u00a0\u3000]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 /* ------------------------------------------------------------------ */
 /*  Suy ra type cho group                                              */
 /* ------------------------------------------------------------------ */
@@ -263,9 +265,15 @@ function inferGroupType(g: QuestionGroup): QuestionType {
   if (/list of headings|match the headings|tiêu đề phù hợp/.test(instr))
     return 'matching';
   // TF/NG: instruction chứa cả TRUE và FALSE (hoặc YES và NO) + NOT GIVEN
-  if (/not given/.test(instr) && (/\btrue\b/.test(instr) || /\byes\b/.test(instr)))
+  if (
+    /not given/.test(instr) &&
+    (/\btrue\b/.test(instr) || /\byes\b/.test(instr) || /\bt\/f\b/.test(instr))
+  )
     return 'boolean';
-  if (/true\s*\/?\s*false|yes\s*\/?\s*no/.test(instr)) return 'boolean';
+  if (
+    /true\s*\/?\s*false|yes\s*\/?\s*no|t\s*\/\s*f|đúng[\s/]*sai/i.test(instr)
+  )
+    return 'boolean';
   if (/match the|matching|nối|phù hợp với/.test(instr) && g.sharedOptions?.length)
     return 'matching';
   if (/choose the correct letter|correct letter,?\s*[a-d]|trắc nghiệm/.test(instr))
@@ -496,9 +504,9 @@ export async function parseDocx(file: File): Promise<Exercise> {
           if (!m || c === 0) return { text: cellText };
 
           const hasBlankMark = BLANK_RE.test(trimmed);
-          // "1. ..........", "2 .........." — số + chuỗi dấu chấm/gạch
+          // "1. ..........", "2 ..........", "3. □□□", "4. ???"
           const hasDotBlank =
-            /^[([]?\d{1,3}[)\].、]?\s*[._….\-–—]{2,}\s*$/.test(trimmed);
+            /^[([]?\d{1,3}[)\].、]?\s*[._…□◻○◯×?#*\-–—]{2,}\s*$/.test(trimmed);
           const bareNumber = /^[([]?\d{1,3}[)\].、]?$/.test(trimmed);
           const isAnswerCell =
             hasBlankMark ||
@@ -556,7 +564,9 @@ export async function parseDocx(file: File): Promise<Exercise> {
           const blankIdx = norm.findIndex(
             (c, ci) =>
               ci !== numIdx &&
-              (c === '' || BLANK_RE.test(c) || /^[._….\-–—\s]{2,}$/.test(c)),
+              (c === '' ||
+                BLANK_RE.test(c) ||
+                /^[._…□◻○◯×?#*\-–—\s]{2,}$/.test(c)),
           );
           if (blankIdx < 0) return;
           const context = row
@@ -611,7 +621,7 @@ export async function parseDocx(file: File): Promise<Exercise> {
 
       // a) Header group: "Questions 1-5" (kể cả dính instruction sau:
       //    "Questions 1–4 Choose the correct letter..." → tách rest ra xử lý tiếp)
-      if (!Q_NUM.test(line)) {
+      if (!Q_NUM.test(line) && !Q_NUM_PREFIX.test(line)) {
         const gh = parseGroupHeader(line);
         if (gh) {
           flushBank();
@@ -621,10 +631,22 @@ export async function parseDocx(file: File): Promise<Exercise> {
         }
       }
 
+      // a0) Số câu có tiền tố: "Q1.", "No. 5:", "Question 12", "Câu 1:", "Item 7"
+      //     (xử lý TRƯỚC header để "Câu 1: ..." không bị lập group mới)
+      const qp = line.match(Q_NUM_PREFIX);
+      if (qp && Number(qp[1]) <= 100) {
+        const g = ensureGroup();
+        if (!numberInRange(Number(qp[1]), g.range) && g.questions.length > 0) {
+          g.range = undefined;
+        }
+        newQuestion(qp[1], qp[2]);
+        continue;
+      }
+
       // a2) Form line: "17. Họ tên: .........." / "Địa chỉ: _____"
       //     (bắt buộc có chỗ trống sau dấu hai chấm → ít false positive)
       const fm = line.match(FORM_LINE);
-      if (fm && !/^(questions?|choose|complete|write|you (?:may|can)|note|part|section)/i.test(fm[2])) {
+      if (fm && !/^(questions?|exercise|task|bài|choose|complete|write|you (?:may|can)|note|part|section)/i.test(fm[2])) {
         const g = ensureGroup();
         const q = newQuestion(fm[1] ?? null, fm[2].trim());
         q.type = 'form';
