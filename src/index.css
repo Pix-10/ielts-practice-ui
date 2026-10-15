@@ -291,6 +291,14 @@ select {
   padding-right: 5px;
 }
 
+/* Flex container có chiều cao cố định → card con bị flex-shrink nén lại
+   (câu hỏi bị cắt bên trong card, không tràn nên không cuộn).
+   Cấm nén: để card giữ chiều cao thật, tràn ra ngoài → scroll hoạt động. */
+.work-left > *,
+.work-right > * {
+  flex-shrink: 0;
+}
+
 /* passage cuộn chung với cột trái, không cuộn riêng 2 lớp */
 .work .passage-body {
   max-height: none;
