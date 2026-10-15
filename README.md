@@ -54,13 +54,18 @@ npm run dev        # http://localhost:5173
 Tạo file mẫu để kiểm thử:
 
 ```bash
-node scripts/make-sample.mjs   # tạo sample-ielts.docx (đủ 5 dạng câu hỏi)
+node scripts/make-sample.mjs   # tạo sample-ielts.docx (đủ 6 dạng câu hỏi)
 ```
+
+> 📖 Quy ước viết file .docx để parser nhận dạng chuẩn:
+> xem **[PARSER_GUIDE.md](./PARSER_GUIDE.md)** (mẫu GOOD/BAD cho từng dạng,
+> giới hạn đã biết, bảng khắc phục sự cố).
 
 ## Kiểm thử (dev)
 
 ```bash
 npx tsx scripts/test-parser.ts                          # parser với sample docx
+npx tsx scripts/test-parser-edge.ts                     # heading/list/bảng tách ô/legend/bank chồng/write
 npx tsx --tsconfig tsconfig.app.json scripts/test-render.ts   # render App
 npx tsx --tsconfig tsconfig.app.json scripts/test-groups.ts   # interactions
 ```

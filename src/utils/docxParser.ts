@@ -13,7 +13,9 @@ import type {
 /* ------------------------------------------------------------------ */
 
 type Block =
-  | { kind: 'p'; text: string }
+  // p: đoạn văn — giữ thêm heading (H1..H6) và list (ol/ul của Word numbering)
+  // để parser dùng làm tín hiệu cấu trúc
+  | { kind: 'p'; text: string; heading?: number; list?: 'ol' | 'ul' }
   | { kind: 'table'; rows: string[][] };
 
 /** Lấy text của element, giữ nguyên xuống dòng (<br>) */
@@ -26,6 +28,14 @@ function elText(el: Element): string {
 function htmlToBlocks(html: string): Block[] {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const blocks: Block[] = [];
+
+  const pushText = (
+    text: string,
+    extra?: { heading?: number; list?: 'ol' | 'ul' },
+  ) => {
+    const t = text.trim();
+    if (t) blocks.push({ kind: 'p', text: t, ...extra });
+  };
 
   doc.body.childNodes.forEach((node) => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -41,8 +51,28 @@ function htmlToBlocks(html: string): Block[] {
       return;
     }
 
-    const text = elText(el).trim();
-    if (text) blocks.push({ kind: 'p', text });
+    // Word đánh số/bullet tự động → mammoth render <ol>/<ul>.
+    // Tách từng <li> thành block riêng (textContent gộp sẽ dính chữ),
+    // đồng thời giữ tag list để bước sau suy ra câu hỏi/word bank.
+    // Lưu ý: số thứ tự gốc của Word bị mammoth bỏ → parser tự gán lại
+    // theo range của group (xem bước "Gán số cho câu chưa có số").
+    if (el.tagName === 'OL' || el.tagName === 'UL') {
+      const items = el.querySelectorAll(':scope > li');
+      const lis = items.length ? items : el.querySelectorAll('li');
+      if (lis.length) {
+        lis.forEach((li) =>
+          pushText(elText(li), {
+            list: el.tagName === 'OL' ? 'ol' : 'ul',
+          }),
+        );
+        return;
+      }
+    }
+
+    // Giữ cấp heading (H1..H6): header "Questions 1-5" để Heading 2
+    // đáng tin hơn đoạn thường → ưu tiên khi tách group.
+    const hm = el.tagName.match(/^H([1-6])$/);
+    pushText(elText(el), hm ? { heading: Number(hm[1]) } : undefined);
   });
 
   return blocks;
@@ -56,6 +86,47 @@ function htmlToBlocks(html: string): Block[] {
 const GROUP_HEADER =
   /^(?:questions?|câu\s*(?:hỏi|h)\s*|part|section)\s*[-–—:]?\s*(\d{1,3})(?:\s*(?:[-–—]|to)\s*(\d{1,3}))?/i;
 
+/** Bản không neo ^ để tìm header nằm giữa dòng ("Part 1: Questions 1-5") */
+const GROUP_HEADER_ANY =
+  /(?:questions?|câu\s*(?:hỏi|h)\s*|part|section)\s*[-–—:]?\s*(\d{1,3})(?:\s*(?:[-–—]|to)\s*(\d{1,3}))?/gi;
+
+/** Kết quả phân tích một dòng header: range + phần instruction dính sau */
+interface ParsedHeader {
+  /** Chuỗi header gọn ("Questions 1–4"), không gồm instruction dính sau */
+  header: string;
+  range?: string;
+  rest: string;
+  index: number;
+}
+
+/**
+ * "Questions 1–4 Choose the correct letter..." → { range: "1-4", rest: "Choose..." }
+ * "Part 1: Questions 1-5" → lấy range 1-5 (match có đủ 2 số), bỏ số của "Part 1".
+ * Trả null nếu match nằm giữa câu (vd "For questions 1-3, refer to...").
+ */
+function parseGroupHeader(line: string): ParsedHeader | null {
+  GROUP_HEADER_ANY.lastIndex = 0;
+  const matches = [...line.matchAll(GROUP_HEADER_ANY)];
+  if (!matches.length) return null;
+  const withRange = matches.find((m) => m[2]);
+  const m = withRange ?? matches[matches.length - 1];
+  const index = m.index ?? 0;
+  // match phải ở đầu dòng hoặc sau dấu ":—–-(" (tiêu đề phụ kiểu "Part 1: Questions 1-5")
+  const prefix = line.slice(0, index);
+  const prefixOk =
+    !prefix.trim() ||
+    /[:：–—() -]\s*$/.test(prefix) ||
+    /^(?:part|section)\s*\d+\s*[:：–—-]?\s*$/i.test(prefix);
+  if (!prefixOk || index > 24) return null;
+  const header = m[0].trim();
+  const range = m[2] ? `${m[1]}-${m[2]}` : `${m[1]}`;
+  const rest = line
+    .slice(index + m[0].length)
+    .trim()
+    .replace(/^[-–—:.,;\s]+/, '');
+  return { header, range, rest, index };
+}
+
 /** "1. text", "1) text", "(1) text", "1 text" */
 const Q_NUM = /^[([]?(\d{1,3})[)\].、:]\s*(.+)$/;
 const Q_NUM_LOOSE = /^(\d{1,3})\s{1,2}([A-Za-z(\[].+)$/;
@@ -65,15 +136,22 @@ const Q_NUM_LOOSE = /^(\d{1,3})\s{1,2}([A-Za-z(\[].+)$/;
 const FORM_LINE =
   /^(?:[([]?(\d{1,3})[)\].、]\s+)?([^:：\n]{2,60}?)\s*[:：]\s*(?:_{2,}|\.{3,}|\…{2,}|\(\s*[.…_ -]{3,}\s*\)|\[[.…_ -]{2,}\])\s*$/;
 
-/** "A. text", "B) text" */
-const OPT_LETTER = /^[([]?([A-Ha-h])[)\].、:]\s+(.+)$/;
+/** "A. text", "B) text" — tới J để phủ matching A–G/H */
+const OPT_LETTER = /^[([]?([A-Ja-j])[)\].、:]\s+(.+)$/;
 
 /** "i. text", "iv) text" */
 const OPT_ROMAN =
   /^[([]?((?:xi{0,3}|ix|iv|vi{0,3}|i{1,3}|x))\s*[).、:]\s+(.+)$/i;
 
+/** Dòng legend đứng riêng: "TRUE", "FALSE", "NOT GIVEN", "YES", "NO"
+ *  (gộp vào instruction để suy type boolean, tránh dính vào text câu hỏi) */
+const LEGEND_LINE = /^(TRUE|FALSE|NOT GIVEN|YES|NO)(\s*[-–—:.].*)?$/i;
+
+/** Dòng ứng viên word bank xếp chồng (mỗi dòng 1–3 từ, vd bullet list) */
+const BANK_LINE = /^[A-Za-zÀ-ỹ'’\-()./ ]{2,28}$/;
+
 const INSTR_RE =
-  /(choose the correct letter|correct letter,?\s*[A-D]|match the|matching|list of headings|true\s*\/?\s*false|yes\s*\/?\s*no|not given|complete the|fill in|write the correct|no more than|you may use|you can use|more than once|one word|two words|three words|does the writer|which paragraph|find (?:the )?information|which section|answer (?:the )?(?:following )?questions|hoàn thành|hợp lý nhất|điền từ|chọn đáp án)/i;
+  /(choose the correct letter|correct letter,?\s*[A-D]|match the|matching|list of headings|true\s*\/?\s*false|yes\s*\/?\s*no|not given|complete the|fill in|write the correct|no more than|you may use|you can use|more than once|one word|two words|three words|does the writer|which paragraph|find (?:the )?information|which section|answer (?:the )?(?:following )?questions|label the|choose (?:one|two|three)|circle the|hoàn thành|hợp lý nhất|điền từ|chọn đáp án|ghi nhãn|khoanh tròn)/i;
 
 const BLANK_RE = /_{2,}|\(\s*[.。…_-]{3,}\s*\)|\[ *\]|…{2,}|_{1}/;
 
@@ -98,7 +176,7 @@ function isRomanOption(line: string): RegExpMatchArray | null {
 
 /** "A. Paris  B. London  C. Rome" → tách thành options */
 function splitInlineLetterOptions(line: string): OptionItem[] | null {
-  const re = /(?:^|\s)[([]?([A-Ha-h])[)\].、:]\s+/g;
+  const re = /(?:^|\s)[([]?([A-Ja-j])[)\].、:]\s+/g;
   const matches = [...line.matchAll(re)];
   if (matches.length < 2) return null;
   const items: OptionItem[] = [];
@@ -126,11 +204,18 @@ function splitInlineRomanOptions(line: string): OptionItem[] | null {
   return items.length >= 3 ? items : null;
 }
 
-/** "achieve, across, attention ..." → danh sách từ */
+/** "achieve, across, attention ..." → danh sách từ.
+ *  Chấp nhận nhiều kiểu phân cách trong file Word: phẩy, chấm phẩy,
+ *  gạch đứng, bullet (•·●▪), tab, nhiều khoảng trắng. */
 function splitWordList(text: string): string[] | null {
   const parts = text
-    .split(/[,;/|]+|\s{2,}|\t+/)
-    .map((s) => s.trim())
+    .split(/[,;/|•·●▪◆]+|\s{2,}|\t+/)
+    .map((s) =>
+      s
+        // bỏ bullet / đánh số đầu dòng ("• word", "1) word")
+        .replace(/^([([]?\d{1,2}[)\].]|[•·●▪◆\-–—])\s*/, '')
+        .trim(),
+    )
     .filter(Boolean);
   if (parts.length >= 5 && parts.every((p) => p.split(/\s+/).length <= 4)) {
     return parts;
@@ -151,6 +236,19 @@ function numberInRange(
   const [a, b] = range.split('-').map(Number);
   if (Number.isNaN(a)) return true;
   return n >= a && (Number.isNaN(b) ? true : n <= b);
+}
+
+/** Chuẩn hoá dòng text: số full-width (１２３), NBSP, ngoặc/quotes cong.
+ *  File Word copy từ web/PDF hay dính ký tự này → regex không khớp. */
+function normalizeLine(s: string): string {
+  return s
+    .replace(/[０-９]/g, (d) => String(d.charCodeAt(0) - 0xff10))
+    .replace(/[（）]/g, (c) => (c === '（' ? '(' : ')'))
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[\u00a0\u3000]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,6 +277,15 @@ function inferGroupType(g: QuestionGroup): QuestionType {
   if (g.sharedOptions?.length) return 'matching';
   if (g.questions.some((q) => q.options?.length)) return 'mcq';
   if (g.wordBank?.length) return 'word-bank';
+  // Tự luận: không options / chỗ trống / bank / bảng, instruction yêu cầu
+  // trả lời tự do ("short answer", "in your own words", "tự luận"...)
+  if (
+    !g.questions.some((q) => BLANK_RE.test(q.text)) &&
+    /(short[\s-]?answer|in your own words|tự luận|answer the following questions|trả lời các câu hỏi sau)/i.test(
+      instr,
+    )
+  )
+    return 'write';
   return 'gap';
 }
 
@@ -290,13 +397,12 @@ export async function parseDocx(file: File): Promise<Exercise> {
     group: null as QuestionGroup | null,
     curQ: null as Question | null,
     collectingInstr: false,
+    // Dòng word bank xếp chồng đang gom dở (mỗi dòng 1 từ, bullet list...)
+    bankLines: [] as string[],
   };
   let qi = 0;
 
-  const newGroup = (headerText: string): QuestionGroup => {
-    const m = headerText.match(GROUP_HEADER);
-    const range =
-      m && m[2] ? `${m[1]}-${m[2]}` : m ? `${m[1]}` : undefined;
+  const newGroup = (headerText: string, range?: string): QuestionGroup => {
     const g: QuestionGroup = {
       id: `g${groups.length}`,
       title: headerText.trim(),
@@ -309,6 +415,7 @@ export async function parseDocx(file: File): Promise<Exercise> {
     groups.push(g);
     state.group = g;
     state.curQ = null;
+    state.bankLines = [];
     state.collectingInstr = true;
     return g;
   };
@@ -332,11 +439,47 @@ export async function parseDocx(file: File): Promise<Exercise> {
     return q;
   };
 
+  /** Chốt các dòng bank đang gom dở: đủ từ → wordBank, không thì trả về instruction. */
+  const flushBank = (): void => {
+    const lines = state.bankLines;
+    if (!lines.length) return;
+    state.bankLines = [];
+    const g = state.group;
+    if (!g || g.table) return;
+    const joined = lines.join(', ');
+    const words = splitWordList(joined);
+    const hint = /box|bank|list of words|word list|you may use|you can use|choose.*from|từ vựng|hộp từ/i.test(
+      g.instruction,
+    );
+    if (words && (hint || lines.length >= 4)) {
+      g.wordBank = [...(g.wordBank ?? []), ...words];
+    } else {
+      g.instruction = g.instruction ? `${g.instruction} ${joined}`.trim() : joined;
+    }
+  };
+
+  /** Dòng có phải 1 mục word bank xếp chồng (mỗi dòng 1–3 từ)? */
+  const isStackedBankCandidate = (line: string): boolean => {
+    if (state.curQ || !state.group || state.group.table) return false;
+    if (!BANK_LINE.test(line)) return false;
+    const words = line.split(/\s+/).filter(Boolean);
+    if (words.length === 0 || words.length > 3) return false;
+    if (
+      INSTR_RE.test(line) ||
+      LEGEND_LINE.test(line) ||
+      Q_NUM.test(line) ||
+      FORM_LINE.test(line)
+    )
+      return false;
+    return true;
+  };
+
   for (let i = start < 0 ? blocks.length : start; i < blocks.length; i++) {
     const b = blocks[i];
 
     /* ----- Bảng ----- */
     if (b.kind === 'table') {
+      flushBank();
       const g = ensureGroup();
       const flat = b.rows.flat().filter(Boolean);
       const allShort = flat.every((c) => c.split(/\s+/).length <= 4);
@@ -348,7 +491,7 @@ export async function parseDocx(file: File): Promise<Exercise> {
       const questionsBefore = g.questions.length;
       const table: TableCell[][] = b.rows.map((row) =>
         row.map((cellText, c) => {
-          const trimmed = cellText.trim();
+          const trimmed = normalizeLine(cellText);
           const m = trimmed.match(CELL_BLANK);
           if (!m || c === 0) return { text: cellText };
 
@@ -392,6 +535,58 @@ export async function parseDocx(file: File): Promise<Exercise> {
         continue;
       }
 
+      // Bảng kiểu "số câu" và "ô trống" nằm ở 2 ô khác nhau trong cùng hàng:
+      // | Copenhagen | 6 | .......... |   hoặc   | 11 |  | (ô để trống)
+      if (
+        /complete|fill|no more than|one word|two words|table|notes|form|summary|flow|plan|diagram|điền|hoàn thành/i.test(
+          g.instruction,
+        )
+      ) {
+        const assigns = new Map<string, Question>();
+        b.rows.forEach((row, r) => {
+          const norm = row.map((c) => normalizeLine(c));
+          const numIdx = norm.findIndex((c) =>
+            /^[([]?\d{1,3}[)\].、]?\s*$/.test(c),
+          );
+          if (numIdx < 0) return;
+          const num = Number(norm[numIdx].match(/(\d{1,3})/)![1]);
+          // số ngoài range đã biết → bỏ qua hàng (tránh bắt nhầm số liệu);
+          // chưa có range thì chấp nhận số ≤ 60
+          if (g.range ? !numberInRange(num, g.range) : num > 60) return;
+          const blankIdx = norm.findIndex(
+            (c, ci) =>
+              ci !== numIdx &&
+              (c === '' || BLANK_RE.test(c) || /^[._….\-–—\s]{2,}$/.test(c)),
+          );
+          if (blankIdx < 0) return;
+          const context = row
+            .filter((_, ci) => ci !== numIdx && ci !== blankIdx)
+            .join(' · ')
+            .trim()
+            .slice(0, 90);
+          const q: Question = {
+            id: `g${groups.length - 1}q${qi++}`,
+            number: num,
+            text: norm[blankIdx] || `Ô ${num}`,
+            type: 'gap',
+            context: context ? `hàng "${context}"` : undefined,
+          };
+          g.questions.push(q);
+          assigns.set(`${r}:${blankIdx}`, q);
+        });
+        if (assigns.size) {
+          g.table = b.rows.map((row, r) =>
+            row.map((cellText, c) => {
+              const q = assigns.get(`${r}:${c}`);
+              return q ? { text: cellText, qid: q.id } : { text: cellText };
+            }),
+          );
+          g.type = 'gap';
+          state.curQ = null;
+          continue;
+        }
+      }
+
       // Không có ô điền → có thể là word bank dạng bảng
       if (!g.wordBank && allShort && flat.length >= 5) {
         const hint = /box|bank|words?|list|từ/i.test(g.instruction);
@@ -406,13 +601,24 @@ export async function parseDocx(file: File): Promise<Exercise> {
     }
 
     /* ----- Đoạn văn: xử lý từng dòng ----- */
-    const lines = b.text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const lines = b.text
+      .split('\n')
+      .map((l) => normalizeLine(l))
+      .filter(Boolean);
 
-    for (const line of lines) {
-      // a) Header group: "Questions 1-5"
-      if (GROUP_HEADER.test(line) && !Q_NUM.test(line)) {
-        newGroup(line);
-        continue;
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+
+      // a) Header group: "Questions 1-5" (kể cả dính instruction sau:
+      //    "Questions 1–4 Choose the correct letter..." → tách rest ra xử lý tiếp)
+      if (!Q_NUM.test(line)) {
+        const gh = parseGroupHeader(line);
+        if (gh) {
+          flushBank();
+          newGroup(gh.header, gh.range);
+          if (gh.rest.length >= 8) lines.splice(li + 1, 0, gh.rest);
+          continue;
+        }
       }
 
       // a2) Form line: "17. Họ tên: .........." / "Địa chỉ: _____"
@@ -477,16 +683,73 @@ export async function parseDocx(file: File): Promise<Exercise> {
         }
       }
 
-      // e) Word bank gộp một dòng
-      if (state.group && !state.group.table) {
-        const words = splitWordList(line);
-        const hint = /box|bank|list of words|word list|you may use|you can use|choose.*from|từ vựng/i.test(
-          (state.group.instruction + ' ' + line).slice(0, 400),
-        );
-        if (words && (hint || words.length >= 6)) {
-          state.group.wordBank = [...(state.group.wordBank ?? []), ...words];
+      // d2) Legend đứng riêng: "TRUE" / "FALSE" / "NOT GIVEN" / "YES" / "NO"
+      //      → gộp vào instruction (suy type boolean), không dính vào text câu hỏi
+      if (LEGEND_LINE.test(line) && line.length < 100) {
+        const g = ensureGroup();
+        flushBank();
+        g.instruction = g.instruction
+          ? `${g.instruction} ${line}`.trim()
+          : line;
+        state.collectingInstr = false;
+        continue;
+      }
+
+      // d3) Mục trong list đánh số tự động của Word (<ol>).
+      //     mammoth đã bỏ số gốc → dòng không có số câu.
+      if (b.kind === 'p' && b.list === 'ol') {
+        // từ đơn trong list số → khả năng là word bank xếp chồng ("1. achieve 2. across")
+        if (isStackedBankCandidate(line)) {
+          state.bankLines.push(line);
           continue;
         }
+        flushBank();
+        const looksNewQuestion =
+          !state.curQ ||
+          /[?？]\s*$/.test(line) ||
+          BLANK_RE.test(line) ||
+          line.length >= 60;
+        if (
+          state.curQ &&
+          !looksNewQuestion &&
+          line.length < 100 &&
+          (state.curQ.options?.length ?? 0) < 10
+        ) {
+          // mục ngắn sau câu hỏi chưa có options → coi là option A/B/C...
+          // (Word numbering chữ (a)(b)(c) cũng bị mammoth bỏ chữ)
+          const letter = String.fromCharCode(
+            65 + (state.curQ.options?.length ?? 0),
+          );
+          state.curQ.options = [
+            ...(state.curQ.options ?? []),
+            { letter, text: line },
+          ];
+        } else {
+          // câu hỏi không số → tạo câu number=null, gán số lại theo range ở bước sau
+          newQuestion(null, line);
+        }
+        continue;
+      }
+
+      // e) Word bank: một dòng gộp ("a, b, c...") HOẶC xếp chồng
+      //    (mỗi dòng 1–3 từ, hay gặp ở bullet list — gom dở rồi chốt ở flushBank)
+      if (state.group && !state.group.table) {
+        const words = splitWordList(line);
+        if (words) {
+          const hint = /box|bank|list of words|word list|you may use|you can use|choose.*from|từ vựng/i.test(
+            (state.group.instruction + ' ' + line).slice(0, 400),
+          );
+          if (hint || words.length >= 6) {
+            flushBank();
+            state.group.wordBank = [...(state.group.wordBank ?? []), ...words];
+            continue;
+          }
+        }
+        if (isStackedBankCandidate(line)) {
+          state.bankLines.push(line);
+          continue;
+        }
+        flushBank();
       }
 
       // f) Instruction
@@ -507,6 +770,31 @@ export async function parseDocx(file: File): Promise<Exercise> {
           ? `${state.group.instruction} ${line}`.trim()
           : line;
       }
+    }
+  }
+
+  // Chốt word bank xếp chồng còn dở ở cuối file
+  flushBank();
+
+  /* ---------- 2b. Gán số cho câu chưa có số ----------
+   * Word đánh số tự động bị mammoth bỏ số gốc → câu number=null.
+   * Gán theo range của group ("1-4" → 1, 2, 3, 4), bỏ qua số đã dùng. */
+  for (const g of groups) {
+    if (!g.range) continue;
+    const [a, b] = g.range.split('-').map(Number);
+    if (Number.isNaN(a)) continue;
+    const end = Number.isNaN(b) ? a : b;
+    const used = new Set(
+      g.questions.map((q) => q.number).filter((n): n is number => n !== null),
+    );
+    let next = a;
+    for (const q of g.questions) {
+      if (q.number !== null) continue;
+      while (next <= end && used.has(next)) next++;
+      if (next > end) break;
+      q.number = next;
+      used.add(next);
+      next++;
     }
   }
 
