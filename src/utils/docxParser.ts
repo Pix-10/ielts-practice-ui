@@ -254,10 +254,86 @@ function numberInRange(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Tag ép kiểu trong file: [TFNG] [FILL] [MCQ] [MATCH] [BANK] [FORM] [WRITE] */
+/* ------------------------------------------------------------------ */
+
+/** Ngoặc có khả năng là tag (chỉ chữ, ≤15 ký tự — "[Box A]" cũng lọt vào
+ *  đây nhưng tagToType trả null nên được giữ nguyên) */
+const TYPE_TAG_RE = /\[\s*([A-Za-zÀ-ỹ][A-Za-zÀ-ỹ/\- ]{0,14})\s*\]/g;
+
+function tagToType(token: string): QuestionType | null {
+  const t = token.toUpperCase().replace(/[/\-\s]/g, '');
+  if (['TFNG', 'TFN', 'TRUEFALSE', 'TRUEFALSENOTGIVEN'].includes(t))
+    return 'boolean';
+  if (['YNNG', 'YNN', 'YESNO', 'YESNONOTGIVEN'].includes(t)) return 'boolean';
+  if (
+    ['MCQ', 'ABCD', 'ABC', 'CHOICE', 'MULTIPLECHOICE', 'TRACNGHIEM', 'TRẮCNGHIỆM'].includes(t)
+  )
+    return 'mcq';
+  if (['MATCH', 'MATCHING', 'NOI', 'NỐI'].includes(t)) return 'matching';
+  if (['FILL', 'GAP', 'BLANK', 'DIEN', 'ĐIỀN', 'DIENTU', 'ĐIỀNTỪ'].includes(t))
+    return 'gap';
+  if (
+    ['BANK', 'WORDBANK', 'BOX', 'HOP', 'HỘP', 'HOPTU', 'HỘPTỪ', 'TUVUNG', 'TỪVỰNG'].includes(t)
+  )
+    return 'word-bank';
+  if (
+    ['FORM', 'INFO', 'THONGTIN', 'THÔNGTIN', 'CUSTOMER', 'KHACHHANG', 'KHÁCHHÀNG'].includes(t)
+  )
+    return 'form';
+  if (['WRITE', 'WRITING', 'ESSAY', 'TULUAN', 'TỰLUẬN'].includes(t))
+    return 'write';
+  return null;
+}
+
+function isYesNoTag(token: string): boolean {
+  const t = token.toUpperCase().replace(/[/\-\s]/g, '');
+  return ['YNNG', 'YNN', 'YESNO', 'YESNONOTGIVEN'].includes(t);
+}
+
+interface FoundTag {
+  type: QuestionType;
+  yesNo: boolean;
+}
+
+/** Tách tag ép kiểu khỏi dòng. Ngoặc lạ ([Box A], [see Fig. 2]...) giữ nguyên. */
+function extractTypeTag(line: string): { tag: FoundTag; clean: string } | null {
+  let found: FoundTag | null = null;
+  const clean = line.replace(TYPE_TAG_RE, (full, token: string) => {
+    const type = tagToType(token);
+    if (!type) return full;
+    if (!found) found = { type, yesNo: isYesNoTag(token) };
+    return '';
+  });
+  if (!found) return null;
+  return { tag: found, clean: normalizeLine(clean) };
+}
+
+/** Ghim type cho group. Tag [YNNG] cần bộ options YES → bổ sung vào
+ *  instruction nếu chưa có (booleanOptions quyết định theo instruction). */
+function applyTag(g: QuestionGroup, t: FoundTag): void {
+  g.type = t.type;
+  g.typeLocked = true;
+  if (t.yesNo) {
+    if (!/\byes\b/i.test(g.instruction)) {
+      g.instruction = g.instruction
+        ? `${g.instruction} (YES / NO / NOT GIVEN)`
+        : 'YES / NO / NOT GIVEN';
+    }
+  } else if (t.type === 'boolean' && !/\btrue\b/i.test(g.instruction)) {
+    g.instruction = g.instruction
+      ? `${g.instruction} (TRUE / FALSE / NOT GIVEN)`
+      : 'TRUE / FALSE / NOT GIVEN';
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Suy ra type cho group                                              */
 /* ------------------------------------------------------------------ */
 
 function inferGroupType(g: QuestionGroup): QuestionType {
+  // Tag [TFNG]/[FILL]/... trong file ép kiểu → ưu tiên tuyệt đối, khỏi đoán
+  if (g.typeLocked) return g.type;
   const instr = g.instruction.toLowerCase();
 
   if (g.questions.some((q) => q.type === 'form')) return 'form';
@@ -407,6 +483,8 @@ export async function parseDocx(file: File): Promise<Exercise> {
     collectingInstr: false,
     // Dòng word bank xếp chồng đang gom dở (mỗi dòng 1 từ, bullet list...)
     bankLines: [] as string[],
+    // Tag ép kiểu đứng riêng trước header ("[MCQ]" rồi mới "Questions 1-5")
+    pendingTag: null as FoundTag | null,
   };
   let qi = 0;
 
@@ -425,6 +503,11 @@ export async function parseDocx(file: File): Promise<Exercise> {
     state.curQ = null;
     state.bankLines = [];
     state.collectingInstr = true;
+    // tag đứng riêng trước header → group mới này hưởng
+    if (state.pendingTag) {
+      applyTag(g, state.pendingTag);
+      state.pendingTag = null;
+    }
     return g;
   };
 
@@ -459,7 +542,11 @@ export async function parseDocx(file: File): Promise<Exercise> {
     const hint = /box|bank|list of words|word list|you may use|you can use|choose.*from|từ vựng|hộp từ/i.test(
       g.instruction,
     );
-    if (words && (hint || lines.length >= 4)) {
+    // group bị tag [BANK] ghim: bank parse được (≥5 từ) là nhận, khỏi cần hint/đủ dòng
+    if (
+      words &&
+      (hint || lines.length >= 4 || (g.typeLocked && g.type === 'word-bank'))
+    ) {
       g.wordBank = [...(g.wordBank ?? []), ...words];
     } else {
       g.instruction = g.instruction ? `${g.instruction} ${joined}`.trim() : joined;
@@ -617,7 +704,26 @@ export async function parseDocx(file: File): Promise<Exercise> {
       .filter(Boolean);
 
     for (let li = 0; li < lines.length; li++) {
-      const line = lines[li];
+      let line = lines[li];
+
+      // a-1) Tag ép kiểu: [TFNG] [FILL] [MCQ] [MATCH] [BANK] [FORM] [WRITE]
+      //      → ghim type group, tag bị xoá khỏi text hiển thị
+      let inlineTag: FoundTag | null = null;
+      const found = extractTypeTag(line);
+      if (found) {
+        if (!found.clean) {
+          // dòng chỉ có tag: ghim vào group hiện tại nếu còn trống,
+          // nếu không để dành cho group kế tiếp
+          if (state.group && state.group.questions.length === 0) {
+            applyTag(state.group, found.tag);
+          } else {
+            state.pendingTag = found.tag;
+          }
+          continue;
+        }
+        line = found.clean;
+        inlineTag = found.tag;
+      }
 
       // a) Header group: "Questions 1-5" (kể cả dính instruction sau:
       //    "Questions 1–4 Choose the correct letter..." → tách rest ra xử lý tiếp)
@@ -625,8 +731,37 @@ export async function parseDocx(file: File): Promise<Exercise> {
         const gh = parseGroupHeader(line);
         if (gh) {
           flushBank();
-          newGroup(gh.header, gh.range);
+          const g = newGroup(gh.header, gh.range);
+          // tag cùng dòng header cụ thể hơn tag để dành → thắng
+          if (inlineTag) applyTag(g, inlineTag);
           if (gh.rest.length >= 8) lines.splice(li + 1, 0, gh.rest);
+          continue;
+        }
+      }
+      // tag đi kèm dòng thường (không phải header) → ghim group hiện tại
+      if (inlineTag) applyTag(ensureGroup(), inlineTag);
+
+      // a-3) Group bị tag [FORM] ghim: dòng "Label: ..." (kể cả không có
+      //      chỗ trống hay kèm giá trị ví dụ) cũng là một ô điền thông tin
+      if (state.group?.typeLocked && state.group.type === 'form') {
+        const fl = line.match(
+          /^(?:[([]?(\d{1,3})[)\].、]\s+)?([^:：\n]{2,40}?)\s*[:：]\s*(.{0,60})$/,
+        );
+        if (
+          fl &&
+          !/^(questions?|exercise|task|bài|choose|complete|write|you (?:may|can)|note|part|section)/i.test(
+            fl[2],
+          ) &&
+          !INSTR_RE.test(line)
+        ) {
+          const g = ensureGroup();
+          const q = newQuestion(fl[1] ?? null, fl[2].trim());
+          q.type = 'form';
+          const val = (fl[3] ?? '').trim();
+          q.placeholder =
+            val && !BLANK_RE.test(val)
+              ? `vd: ${val}`
+              : gapPlaceholder(g.instruction);
           continue;
         }
       }
@@ -841,7 +976,8 @@ export async function parseDocx(file: File): Promise<Exercise> {
     for (const q of g.questions) {
       if (q.type === 'form') {
         // câu điền thông tin đã được nhận dạng từ trước — giữ nguyên
-        q.placeholder = gapPlaceholder(g.instruction);
+        // (placeholder "vd: ..." từ giá trị ví dụ được giữ lại)
+        q.placeholder = q.placeholder ?? gapPlaceholder(g.instruction);
       } else {
         switch (g.type) {
           case 'boolean':

@@ -14,6 +14,11 @@ Mammoth **bỏ** màu chữ, cỡ chữ, numbering gốc của Word — parser c
 dựa vào: **text, Heading (H1–H6), list (đánh số/bullet tự động), bảng, link**.
 Viết file đúng các quy ước dưới đây thì nhận dạng gần như 100%.
 
+> 🔒 **Cách chắc chắn nhất: tag ép kiểu.** Gắn 1 tag vào header,
+> instruction hoặc đứng riêng 1 dòng — parser ghim đúng loại, khỏi đoán:
+> `Questions 1–3 [TFNG]`. Tag bị xoá khỏi text hiển thị, group hiện huy
+> hiệu `🔒 tag`. Chi tiết xem **mục 8**.
+
 ## 1. Khung file chuẩn
 
 ```
@@ -234,11 +239,38 @@ dấu câu CJK (`，；：（）［］【】` → `,;:()[]`), `﹏﹍＿` → `_
 npx tsx scripts/test-symbols.ts   # 40+ assertions cho bảng ký hiệu
 ```
 
-## 8. Chạy kiểm thử parser
+## 8. Tag ép kiểu — `[TFNG]` `[FILL]`...
+
+Khi instruction khó viết đúng từ khóa, gắn tag để **ép thẳng loại câu hỏi**
+(ưu tiên tuyệt đối hơn mọi suy đoán). Tag đặt ở:
+
+```text
+Questions 1–3 [TFNG]      ← dính sau header
+[FILL]                    ← đứng riêng 1 dòng (trước header cũng được)
+Complete the sentences. [BANK]   ← dính trong instruction
+```
+
+| Tag | Loại ép | Ghi chú |
+|---|---|---|
+| `[TFNG]` `[T/F/NG]` | boolean TRUE/FALSE/NOT GIVEN | Không cần legend, câu plain vẫn ra nút bấm |
+| `[YNNG]` `[Y/N/NG]` | boolean YES/NO/NOT GIVEN | Tự bổ sung vào instruction để ra đúng bộ nút |
+| `[MCQ]` `[ABCD]` `[CHOICE]` | trắc nghiệm | |
+| `[MATCH]` | matching | |
+| `[FILL]` `[GAP]` `[BLANK]` | điền từ | |
+| `[BANK]` `[BOX]` | word bank | Bank ít từ/vắng hint vẫn nhận |
+| `[FORM]` `[INFO]` | điền thông tin | Dòng `Label: ...` **không cần chỗ trống** cũng thành ô điền; giá trị ví dụ (`Name: Nguyen Van A`) thành placeholder `vd: ...` |
+| `[WRITE]` | tự luận | |
+
+- Viết thường cũng được (`[tfng]`), có/không dấu (`[ĐIỀN TỪ]`, `[NỐI]`, `[TỰ LUẬN]`).
+- Ngoặc lạ **giữ nguyên**: `[Box A]`, `[see Fig. 2]` (chỉ tag đã biết mới bị ăn).
+- UI hiện huy hiệu `🔒 tag` ở group bị ghim.
+
+## 9. Chạy kiểm thử parser
 
 ```bash
 npx tsx scripts/test-parser.ts        # regression với sample-ielts.docx
 npx tsx scripts/test-parser-edge.ts   # heading/list/bảng tách ô/legend/bank chồng/write
 npx tsx scripts/test-symbols.ts       # bảng ký hiệu (mục 7)
+npx tsx scripts/test-tags.ts          # tag ép kiểu [TFNG]/[FILL]/... (mục 8)
 npx tsx --tsconfig tsconfig.app.json scripts/test-groups.ts   # interactions
 ```

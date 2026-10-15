@@ -67,6 +67,7 @@ node scripts/make-sample.mjs   # tạo sample-ielts.docx (đủ 6 dạng câu h�
 npx tsx scripts/test-parser.ts                          # parser với sample docx
 npx tsx scripts/test-parser-edge.ts                     # heading/list/bảng tách ô/legend/bank chồng/write
 npx tsx scripts/test-symbols.ts                         # bảng ký hiệu (normalize + tiền tố số + blank mới)
+npx tsx scripts/test-tags.ts                            # tag ép kiểu [TFNG]/[FILL]/[FORM]/...
 npx tsx --tsconfig tsconfig.app.json scripts/test-render.ts   # render App
 npx tsx --tsconfig tsconfig.app.json scripts/test-groups.ts   # interactions
 ```

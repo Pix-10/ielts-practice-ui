@@ -85,6 +85,14 @@ export function GroupView({
         <div className="group-title-row">
           <h3>{group.title}</h3>
           <span className={`badge ${info.cls}`}>{info.label}</span>
+          {group.typeLocked && (
+            <span
+              className="badge green"
+              title="Loại câu hỏi do tag [TFNG]/[FILL]/... trong file chỉ định — không phải đoán tự động"
+            >
+              🔒 tag
+            </span>
+          )}
           <span
             className={`badge ${done === group.questions.length ? 'green' : 'amber'}`}
           >

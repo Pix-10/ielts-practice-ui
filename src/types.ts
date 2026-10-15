@@ -33,6 +33,8 @@ export interface QuestionGroup {
   range?: string;
   instruction: string;
   type: QuestionType;
+  /** true khi type do tag [TFNG]/[FILL]/... trong file chỉ định (không suy đoán) */
+  typeLocked?: boolean;
   wordBank?: string[];
   sharedOptions?: OptionItem[];
   questions: Question[];
