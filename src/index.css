@@ -267,6 +267,10 @@ select {
 .work {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* Row mặc định (auto) sẽ nở theo nội dung làm cột không cuộn được
+     → ghim row bằng container để 2 cột cuộn riêng */
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
   gap: 18px;
   max-width: 1600px;
   margin: 0 auto;
@@ -297,6 +301,8 @@ select {
 @media (max-width: 760px) {
   .work {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
+    overflow: visible;
     height: auto;
     padding: 14px 14px 130px;
     gap: 14px;

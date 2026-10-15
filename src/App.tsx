@@ -353,25 +353,6 @@ export default function App() {
                     </div>
                   ))}
               </div>
-
-              <div className="card card-pad">
-                <div className="card-title">Thông tin người làm</div>
-                <input
-                  className="name-input"
-                  placeholder="Họ và tên (tùy chọn)..."
-                  value={student}
-                  onChange={(e) => setStudent(e.target.value)}
-                />
-                <div className="divider" />
-                <p className="hint">
-                  💡 Bấm <span className="kbd">Enter</span> ở ô nhập để nhảy câu
-                  kế tiếp · click từ <b>word bank</b> để điền nhanh · 🚩 đánh
-                  dấu câu khó.
-                  <br />
-                  <br />
-                  Dữ liệu lưu cục bộ trên trình duyệt — không gửi đi đâu.
-                </p>
-              </div>
             </aside>
 
             {/* ===== Cột phải: câu hỏi ===== */}
