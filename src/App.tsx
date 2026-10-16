@@ -27,6 +27,8 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [student, setStudent] = useState('');
   const [passageOpen, setPassageOpen] = useState(true);
+  // Passage đang xem ở cột trái (file nhiều passage)
+  const [activePassageId, setActivePassageId] = useState<string | null>(null);
   // Audio bài Listening: url (remote hoặc objectURL) + tên file local
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioName, setAudioName] = useState<string | null>(null);
@@ -47,6 +49,7 @@ export default function App() {
     setAnswers(load<Answers>(key, {}));
     setFlags(load<Flags>(`${key}-flags`, {}));
     setStudent(load<string>(`${key}-student`, ''));
+    setActivePassageId(exercise.passages[0]?.id ?? null);
     // Audio: ưu tiên URL người dùng đã lưu, sau đó link tìm thấy trong docx
     const saved = load<string | null>(`${key}-audio`, null);
     setAudioUrl(saved ?? exercise.audioUrl ?? null);
@@ -145,15 +148,25 @@ export default function App() {
     setFlags((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
-  const jumpTo = useCallback((id: string) => {
-    setActiveId(id);
-    setFlashId(null);
-    // ép animation chạy lại
-    requestAnimationFrame(() => setFlashId(id));
-    document
-      .getElementById(`q-${id}`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, []);
+  const jumpTo = useCallback(
+    (id: string) => {
+      setActiveId(id);
+      setFlashId(null);
+      // ép animation chạy lại
+      requestAnimationFrame(() => setFlashId(id));
+      // tự chuyển tab passage theo group chứa câu hỏi
+      if (exercise) {
+        const g = exercise.groups.find((gr) =>
+          gr.questions.some((q) => q.id === id),
+        );
+        if (g?.passageId) setActivePassageId(g.passageId);
+      }
+      document
+        .getElementById(`q-${id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    },
+    [exercise],
+  );
 
   // Chế độ làm bài: gắn class lên <html> để layout (topbar + audio +
   // 2 cột + bottom bar) thành flex column chiếm trọn viewport — 2 cột
@@ -173,6 +186,12 @@ export default function App() {
     () => allQuestions.filter((q) => answers[q.id]?.trim()).length,
     [allQuestions, answers],
   );
+
+  // Passage đang hiển thị ở cột trái (mặc định section đầu tiên)
+  const activeSection = exercise
+    ? (exercise.passages.find((s) => s.id === activePassageId) ??
+      exercise.passages[0])
+    : undefined;
 
   const handleExport = useCallback(async () => {
     if (!exercise) return;
@@ -292,43 +311,82 @@ export default function App() {
                 </div>
               )}
 
-              <div className="card">
-                <div
-                  className="passage-head"
-                  onClick={() => setPassageOpen((v) => !v)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') setPassageOpen((v) => !v);
-                  }}
-                >
-                  <h3>
-                    📖 Passage / Nội dung bài{' '}
-                    <span className="badge">
-                      {exercise.passage.length} đoạn
-                    </span>
-                  </h3>
-                  <span className={`chev ${passageOpen ? 'open' : ''}`}>▼</span>
-                </div>
-                {passageOpen &&
-                  (exercise.passage.length ? (
-                    <div className="passage-body">
-                      {exercise.passage.map((p, i) => (
-                        <p
-                          key={i}
-                          dangerouslySetInnerHTML={{ __html: escapeHtml(p) }}
-                        />
-                      ))}
+              <>
+                    {exercise.passages.length > 1 && (
+                      <div
+                        className="passage-tabs"
+                        role="tablist"
+                        aria-label="Các phần bài đọc"
+                      >
+                        {exercise.passages.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            role="tab"
+                            aria-selected={
+                              activeSection != null && s.id === activeSection.id
+                            }
+                            className={`ptab ${activeSection != null && s.id === activeSection.id ? 'active' : ''}`}
+                            onClick={() => setActivePassageId(s.id)}
+                            title={`${s.title} — ${s.paragraphs.length} đoạn`}
+                          >
+                            {s.label}
+                            <span className="ptab-count">
+                              {s.paragraphs.length}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="card">
+                      <div
+                        className="passage-head"
+                        onClick={() => setPassageOpen((v) => !v)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') setPassageOpen((v) => !v);
+                        }}
+                      >
+                        <h3>
+                          📖{' '}
+                          {activeSection
+                            ? activeSection.title
+                            : 'Passage / Nội dung bài'}{' '}
+                          <span className="badge">
+                            {activeSection
+                              ? activeSection.paragraphs.length
+                              : 0}{' '}
+                            đoạn
+                          </span>
+                        </h3>
+                        <span className={`chev ${passageOpen ? 'open' : ''}`}>
+                          ▼
+                        </span>
+                      </div>
+                      {passageOpen &&
+                        (activeSection && activeSection.paragraphs.length ? (
+                          <div className="passage-body">
+                            {activeSection.paragraphs.map((p, i) => (
+                              <p
+                                key={i}
+                                dangerouslySetInnerHTML={{
+                                  __html: escapeHtml(p),
+                                }}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="passage-body">
+                            <p className="hint">
+                              Không tìm thấy phần passage trong file (có thể
+                              file chỉ chứa câu hỏi).
+                            </p>
+                          </div>
+                        ))}
                     </div>
-                  ) : (
-                    <div className="passage-body">
-                      <p className="hint">
-                        Không tìm thấy phần passage trong file (có thể file chỉ
-                        chứa câu hỏi).
-                      </p>
-                    </div>
-                  ))}
-              </div>
+                  </>
             </aside>
 
             {/* ===== Cột phải: câu hỏi ===== */}

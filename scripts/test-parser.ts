@@ -15,7 +15,10 @@ const file = new File([buf], 'sample-ielts.docx');
 const exercise = await parseDocx(file);
 
 console.log('TITLE:', exercise.title);
-console.log('PASSAGE paragraphs:', exercise.passage.length);
+console.log(
+  'PASSAGES:',
+  exercise.passages.map((s) => `${s.label} (${s.paragraphs.length} đoạn)`).join(' | '),
+);
 console.log('AUDIO URL:', exercise.audioUrl ?? '(không có)');
 console.log('WARNINGS:', exercise.warnings);
 console.log('GROUPS:', exercise.groups.length);

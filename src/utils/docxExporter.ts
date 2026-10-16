@@ -308,22 +308,42 @@ export async function exportToDocx(
     }),
   );
 
-  if (exercise.passage.length) {
-    children.push(
-      new Paragraph({
-        text: 'PASSAGE',
-        heading: HeadingLevel.HEADING_1,
-        spacing: { before: 120, after: 120 },
-      }),
-    );
-    for (const para of exercise.passage) {
-      children.push(
-        new Paragraph({ text: para, spacing: { after: 120 } }),
-      );
+  // Mỗi passage + các group thuộc nó (file nhiều passage: P1/P2/P3...)
+  const groupsByPassage = new Map<string, QuestionGroup[]>();
+  const unassigned: QuestionGroup[] = [];
+  for (const g of exercise.groups) {
+    if (
+      g.passageId &&
+      exercise.passages.some((s) => s.id === g.passageId)
+    ) {
+      const list = groupsByPassage.get(g.passageId) ?? [];
+      list.push(g);
+      groupsByPassage.set(g.passageId, list);
+    } else {
+      unassigned.push(g);
     }
   }
 
-  for (const group of exercise.groups) {
+  for (const sec of exercise.passages) {
+    if (sec.paragraphs.length) {
+      children.push(
+        new Paragraph({
+          text: sec.title,
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 120, after: 120 },
+        }),
+      );
+      for (const para of sec.paragraphs) {
+        children.push(
+          new Paragraph({ text: para, spacing: { after: 120 } }),
+        );
+      }
+    }
+    for (const group of groupsByPassage.get(sec.id) ?? []) {
+      children.push(...groupToChildren(group, answers));
+    }
+  }
+  for (const group of unassigned) {
     children.push(...groupToChildren(group, answers));
   }
 

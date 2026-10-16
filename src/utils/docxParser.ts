@@ -2,6 +2,7 @@ import mammoth from 'mammoth';
 import type {
   Exercise,
   OptionItem,
+  PassageSection,
   Question,
   QuestionGroup,
   QuestionType,
@@ -135,6 +136,35 @@ function parseGroupHeader(line: string): ParsedHeader | null {
     .trim()
     .replace(/^[-–—:.,;\s]+/, '');
   return { header, range, rest, index };
+}
+
+/** Header phần bài đọc: "READING PASSAGE 1", "Passage 2: Title", "Bài đọc 1", "Đoạn văn 2".
+ *  Cố tình KHÔNG nhận "Section/Part" (đó là section nghe/làm bài, giữ hành vi cũ)
+ *  và "Bài 1" trần (đó là header group câu hỏi). Không số → phải đúng nguyên
+ *  chữ "Passage"/"Bài đọc" (tránh nuốt câu văn mở đầu bằng "Passage..."). */
+function parsePassageHeader(line: string): { title: string; label: string } | null {
+  const t = line.trim();
+  if (!t || t.length > 90) return null;
+  const en = t.match(
+    /^(?:reading\s+)?passages?\s*(\d{1,2})?\s*[:–—-]?\s*(.{0,60})$/i,
+  );
+  const viM = en
+    ? null
+    : t.match(
+        /^(bài\s*đọc|đoạn\s*văn)\s*(?:số\s*)?(\d{1,2})?\s*[:–—-]?\s*(.{0,60})$/i,
+      );
+  const m = en ?? viM;
+  if (!m) return null;
+  const numStr = en ? m[1] : m[2];
+  const rest = ((en ? m[2] : m[3]) ?? '').trim().replace(/^[-–—:.,;\s]+/, '');
+  const num = numStr ? Number(numStr) : null;
+  if (num === null && rest) return null;
+  const base =
+    num !== null ? (viM ? `Bài đọc ${num}` : `Passage ${num}`) : viM ? 'Bài đọc' : 'Passage';
+  return {
+    title: rest ? `${base}: ${rest}` : t.length <= 60 ? t : base,
+    label: base,
+  };
 }
 
 /** "1. text", "1) text", "(1) text", "1 text" */
@@ -438,8 +468,19 @@ export async function parseDocx(file: File): Promise<Exercise> {
   }
 
   let title = file.name.replace(/\.docx$/i, '');
-  const passage: string[] = [];
+  const sections: PassageSection[] = [];
   let pendingInstr = '';
+
+  const newSection = (title: string, label: string): PassageSection => {
+    const s: PassageSection = {
+      id: `p${sections.length}`,
+      title,
+      label,
+      paragraphs: [],
+    };
+    sections.push(s);
+    return s;
+  };
 
   if (start >= 0) {
     const pre = blocks.slice(0, start).filter((b) => b.kind === 'p') as Extract<
@@ -462,16 +503,52 @@ export async function parseDocx(file: File): Promise<Exercise> {
         pendingInstr = last.text.trim();
         pre.pop();
       }
-      passage.push(...pre.map((p) => p.text.trim()).filter(Boolean));
+      // Tách phần mở đầu thành các passage: nội dung trước header Passage
+      // đầu tiên gộp chung vào section đó (giữ hành vi cũ với file 1 passage).
+      let cur = newSection('Bài đọc', 'Bài đọc');
+      let seenHeader = false;
+      for (const p of pre) {
+        const text = p.text.trim();
+        if (!text) continue;
+        const ph = parsePassageHeader(text);
+        if (ph) {
+          if (!seenHeader) {
+            cur.title = ph.title;
+            cur.label = ph.label;
+          } else {
+            cur = newSection(ph.title, ph.label);
+          }
+          seenHeader = true;
+        } else {
+          cur.paragraphs.push(text);
+        }
+      }
     }
   } else {
     warnings.push(
       'Không tìm thấy khu vực câu hỏi — chỉ đọc được phần nội dung (passage).',
     );
+    let cur = newSection('Bài đọc', 'Bài đọc');
+    let seenHeader = false;
     blocks.forEach((b) => {
-      if (b.kind === 'p') passage.push(b.text.trim());
+      if (b.kind !== 'p') return;
+      const text = b.text.trim();
+      if (!text) return;
+      const ph = parsePassageHeader(text);
+      if (ph) {
+        if (!seenHeader && cur.paragraphs.length === 0) {
+          cur.title = ph.title;
+          cur.label = ph.label;
+        } else {
+          cur = newSection(ph.title, ph.label);
+        }
+        seenHeader = true;
+      } else {
+        cur.paragraphs.push(text);
+      }
     });
   }
+  if (!sections.length) newSection('Bài đọc', 'Bài đọc');
 
   /* ---------- 2. Walk các block khu vực câu hỏi ---------- */
   const groups: QuestionGroup[] = [];
@@ -485,8 +562,57 @@ export async function parseDocx(file: File): Promise<Exercise> {
     bankLines: [] as string[],
     // Tag ép kiểu đứng riêng trước header ("[MCQ]" rồi mới "Questions 1-5")
     pendingTag: null as FoundTag | null,
+    // Section passage hiện tại + có đang gom đoạn văn của nó không
+    currentPassageId: sections[sections.length - 1].id,
+    collectingPassage: false,
   };
   let qi = 0;
+
+  const currentSection = (): PassageSection =>
+    sections.find((s) => s.id === state.currentPassageId) ??
+    sections[sections.length - 1];
+
+  /** Header passage giữa khu vực câu hỏi: section rỗng thì đặt tên lại,
+   *  section đã có nội dung/câu hỏi thì mở section mới. */
+  const enterPassageSection = (title: string, label: string): void => {
+    const cur = currentSection();
+    const used = groups.some((g) => g.passageId === cur.id);
+    if (cur.paragraphs.length === 0 && !used) {
+      cur.title = title;
+      cur.label = label;
+    } else {
+      const sec = newSection(title, label);
+      state.currentPassageId = sec.id;
+    }
+    state.collectingPassage = true;
+    state.curQ = null;
+    state.bankLines = [];
+  };
+
+  /** Dòng có phải nội dung câu hỏi (để thoát passage mode) */
+  const isQuestionLike = (line: string): boolean => {
+    if (
+      Q_NUM.test(line) ||
+      Q_NUM_PREFIX.test(line) ||
+      line.match(Q_NUM_LOOSE) ||
+      parseGroupHeader(line) !== null ||
+      isLetterOption(line) ||
+      isRomanOption(line) ||
+      splitInlineLetterOptions(line) ||
+      splitInlineRomanOptions(line) ||
+      BLANK_RE.test(line)
+    )
+      return true;
+    const fm = line.match(FORM_LINE);
+    if (
+      fm &&
+      !/^(questions?|exercise|task|bài|choose|complete|write|you (?:may|can)|note|part|section)/i.test(
+        fm[2],
+      )
+    )
+      return true;
+    return false;
+  };
 
   const newGroup = (headerText: string, range?: string): QuestionGroup => {
     const g: QuestionGroup = {
@@ -495,6 +621,7 @@ export async function parseDocx(file: File): Promise<Exercise> {
       range,
       instruction: pendingInstr,
       type: 'gap',
+      passageId: state.currentPassageId,
       questions: [],
     };
     pendingInstr = '';
@@ -574,6 +701,8 @@ export async function parseDocx(file: File): Promise<Exercise> {
 
     /* ----- Bảng ----- */
     if (b.kind === 'table') {
+      // bảng luôn thuộc khu vực câu hỏi → thoát passage mode
+      state.collectingPassage = false;
       flushBank();
       const g = ensureGroup();
       const flat = b.rows.flat().filter(Boolean);
@@ -705,6 +834,29 @@ export async function parseDocx(file: File): Promise<Exercise> {
 
     for (let li = 0; li < lines.length; li++) {
       let line = lines[li];
+
+      // p) Header passage giữa khu vực câu hỏi: "READING PASSAGE 2", "Bài đọc 1"
+      const ph = parsePassageHeader(line);
+      if (ph) {
+        flushBank();
+        enterPassageSection(ph.title, ph.label);
+        continue;
+      }
+
+      // p2) Đang gom đoạn văn của passage: dòng thường → thêm vào section;
+      //     dòng giống câu hỏi → thoát mode, xử lý tiếp như bình thường.
+      //     Instruction dính trước header group kế → giữ làm pendingInstr.
+      if (state.collectingPassage) {
+        if (INSTR_RE.test(line)) {
+          pendingInstr = pendingInstr ? `${pendingInstr} ${line}` : line;
+          continue;
+        }
+        if (!isQuestionLike(line)) {
+          currentSection().paragraphs.push(line);
+          continue;
+        }
+        state.collectingPassage = false;
+      }
 
       // a-1) Tag ép kiểu: [TFNG] [FILL] [MCQ] [MATCH] [BANK] [FORM] [WRITE]
       //      → ghim type group, tag bị xoá khỏi text hiển thị
@@ -1023,7 +1175,7 @@ export async function parseDocx(file: File): Promise<Exercise> {
   /* ---------- 4. Tìm link audio (bài Listening) ---------- */
   const audioUrl = findAudioUrl(html, blocks);
 
-  return { title, fileName: file.name, passage, groups, warnings, audioUrl };
+  return { title, fileName: file.name, passages: sections, groups, warnings, audioUrl };
 }
 
 /** Nhận diện URL audio trong hyperlink hoặc text thuần:

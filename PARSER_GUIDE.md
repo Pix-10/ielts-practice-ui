@@ -42,6 +42,11 @@ Questions 5–7
 - Instruction **được dính luôn sau header cũng OK**:
   `Questions 1–4 Choose the correct letter, A, B, C or D.` (parser tự tách).
 - Mọi thứ trước group đầu tiên → passage (bảng/ảnh trong passage bị bỏ qua).
+- **File nhiều passage**: mỗi phần mở đầu bằng header riêng
+  (`READING PASSAGE 1`, `Passage 2: ...`, `Bài đọc 1`, `Đoạn văn 2` —
+  nên để Heading 1/2). Parser tách thành từng section, group nào thuộc
+  passage nào tự gán theo vị trí. KHÔNG dùng `Section/Part` hay `Bài 1`
+  trần làm header passage (đó là header group câu hỏi).
 
 ## 2. Từng dạng câu hỏi — mẫu GOOD / BAD
 
@@ -272,5 +277,6 @@ npx tsx scripts/test-parser.ts        # regression với sample-ielts.docx
 npx tsx scripts/test-parser-edge.ts   # heading/list/bảng tách ô/legend/bank chồng/write
 npx tsx scripts/test-symbols.ts       # bảng ký hiệu (mục 7)
 npx tsx scripts/test-tags.ts          # tag ép kiểu [TFNG]/[FILL]/... (mục 8)
+npx tsx scripts/test-passages.ts      # file nhiều passage (tách section + gán group)
 npx tsx --tsconfig tsconfig.app.json scripts/test-groups.ts   # interactions
 ```

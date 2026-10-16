@@ -33,6 +33,9 @@ Tự nhận dạng cấu trúc file .docx và phân loại câu hỏi:
 
 ### ✏️ Làm bài trên web
 - **Bố cục 2 cột**: bên trái là passage/audio (dính khi cuộn), bên phải là các câu hỏi
+- **Nhiều passage**: tabs chuyển phần bài đọc (Passage 1/2/3...), bấm số câu
+  ở thanh dưới → tab tự nhảy theo passage chứa câu đó (`READING PASSAGE 1`,
+  `Bài đọc 1`... — xem README)
 - **Thanh dưới cùng**: điều hướng mọi câu (nhóm tách riêng) + tiến độ vòng tròn % + nút Copy/Xuất
 - Đánh dấu 🚩 câu khó (chấm hiện trên số ở thanh điều hướng)
 - Word bank: click chip để tự điền vào câu đang chọn
@@ -68,6 +71,7 @@ npx tsx scripts/test-parser.ts                          # parser với sample do
 npx tsx scripts/test-parser-edge.ts                     # heading/list/bảng tách ô/legend/bank chồng/write
 npx tsx scripts/test-symbols.ts                         # bảng ký hiệu (normalize + tiền tố số + blank mới)
 npx tsx scripts/test-tags.ts                            # tag ép kiểu [TFNG]/[FILL]/[FORM]/...
+npx tsx scripts/test-passages.ts                        # file nhiều passage (tách section + gán group)
 npx tsx --tsconfig tsconfig.app.json scripts/test-render.ts   # render App
 npx tsx --tsconfig tsconfig.app.json scripts/test-groups.ts   # interactions
 ```
@@ -107,6 +111,33 @@ Complete the form below. Write ONE WORD ONLY.
 17. Full name: ..........
 18. Address: ..........
 ```
+
+### Nhiều passage trong 1 file
+
+```text
+IELTS Reading Test 1
+
+READING PASSAGE 1              ← header passage (để Heading 1/2 càng tốt)
+<đoạn văn...>
+
+Questions 1–6
+...
+
+READING PASSAGE 2: The History of Salt    ← tiêu đề sau số cũng được
+<đoạn văn...>
+
+Questions 7–13
+...
+```
+
+- Header passage: `READING PASSAGE 1`, `Passage 2`, `Bài đọc 1`, `Đoạn văn 2`.
+  Cố tình KHÔNG nhận `Section/Part` (đó là section nghe/làm bài) và `Bài 1`
+  trần (đó là header group câu hỏi).
+- Cột trái hiện **tabs chuyển passage**; bấm số câu ở thanh dưới → tab tự
+  nhảy theo passage chứa câu đó. Xuất `.docx` cũng tách từng passage kèm
+  đúng groups của nó.
+- Nội dung trước header Passage đầu tiên gộp vào section đó (file 1 passage
+  hành xử y như cũ).
 
 ## Công nghệ
 

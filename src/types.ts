@@ -35,16 +35,29 @@ export interface QuestionGroup {
   type: QuestionType;
   /** true khi type do tag [TFNG]/[FILL]/... trong file chỉ định (không suy đoán) */
   typeLocked?: boolean;
+  /** id của passage chứa group này (file nhiều passage) */
+  passageId?: string;
   wordBank?: string[];
   sharedOptions?: OptionItem[];
   questions: Question[];
   table?: TableCell[][];
 }
 
+/** Một phần bài đọc trong file nhiều passage (IELTS Reading P1/P2/P3...) */
+export interface PassageSection {
+  id: string;
+  /** Tiêu đề đầy đủ: "READING PASSAGE 2", "Bài đọc 1"... */
+  title: string;
+  /** Nhãn ngắn cho tab: "Passage 2", "Bài đọc 1", "Bài đọc" */
+  label: string;
+  paragraphs: string[];
+}
+
 export interface Exercise {
   title: string;
   fileName: string;
-  passage: string[];
+  /** Các phần bài đọc (1 phần nếu file chỉ có 1 passage) */
+  passages: PassageSection[];
   groups: QuestionGroup[];
   warnings: string[];
   /** Link audio phát hiện được trong file (bài Listening) */
